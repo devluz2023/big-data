@@ -1,0 +1,21 @@
+cat << 'EOF' > .gitignore
+# Ambientes virtuais e Python
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+.venv/
+env/
+
+# Volumes de dados do Docker (Locais)
+postgres_data/
+es_data/
+kafka_data/
+zookeeper_data/
+warehouse/
+
+# Arquivos do Sistema Operacional
+.DS_Store
+.Spotlight-V100
+.Trashes
+EOF
