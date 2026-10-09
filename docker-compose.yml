@@ -126,7 +126,8 @@ services:
     image: docker.elastic.co/logstash/logstash:8.11.3
     container_name: logstash
     depends_on:
-      - elasticsearch
+      elasticsearch:
+        condition: service_started
     ports:
       - "5044:5044"
     volumes:
@@ -145,6 +146,10 @@ services:
       - xpack.security.enabled=false
       - xpack.security.enrollment.enabled=false
       - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
     ports:
       - "9200:9200"
     volumes:
