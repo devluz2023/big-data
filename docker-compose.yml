@@ -5,54 +5,61 @@ networks:
     driver: bridge
 
 volumes:
-  postgres_data:
-  mysql_data:         # <-- NOVO
+  postgres_lake_data:
+  mysql_transact_data:
+  mssql_data:
+  oracle_data:
+  n8n_data:
+  jenkins_data:
   es_data:
   kafka_data:
   zookeeper_data:
+  mongo_data:
+  redis_data:
+  ollama_data:
+  prometheus_data:
+  grafana_data:
+  airflow_data:
 
 services:
   # ==========================================
-  # POSTGRESQL (Metastore / Lake Database)
+  # POSTGRESQL (Lake Metastore + MLflow + Airflow Backend)
   # ==========================================
   postgres:
     image: postgres:15-alpine
-    container_name: postgres-metastore
+    container_name: postgres-lake
     environment:
-      POSTGRES_DB: metastore
+      POSTGRES_DB: lake_metastore
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: password123
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_lake_data:/var/lib/postgresql/data
     networks:
       - lakehouse-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d metastore"]
+      test: ["CMD-SHELL", "pg_isready -U admin -d lake_metastore"]
       interval: 5s
       timeout: 5s
       retries: 5
 
   # ==========================================
-  # MYSQL (Database adicional / MLflow Backend)
-  # ==========================================
-  # ==========================================
-  # MYSQL (Database adicional / MLflow Backend)
+  # MYSQL (Banco Transacional Principal - OLTP)
   # ==========================================
   mysql:
     image: mysql:8.0
-    container_name: mysql-db
+    container_name: mysql-transact
     command: --log-bin-trust-function-creators=1
     environment:
-      MYSQL_DATABASE: mlflow_db
+      MYSQL_DATABASE: app_transact_db
       MYSQL_ROOT_PASSWORD: rootpassword123
-      MYSQL_USER: mlflow_user
-      MYSQL_PASSWORD: mlflowpassword123
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: app_password123
     ports:
       - "3306:3306"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - mysql_transact_data:/var/lib/mysql
     networks:
       - lakehouse-net
     healthcheck:
@@ -62,28 +69,210 @@ services:
       retries: 5
 
   # ==========================================
-  # MLFLOW TRACKING SERVER
+  # MICROSOFT SQL SERVER (Banco Transacional / Enterprise)
   # ==========================================
- # ==========================================
-  # MLFLOW TRACKING SERVER
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: mssql-transact
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Password123!"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql_data:/var/opt/mssql
+    networks:
+      - lakehouse-net
+
+  # ==========================================
+  # ORACLE DATABASE (Free / XE)
+  # ==========================================
+  oracle:
+    image: gvenzl/oracle-free:latest
+    container_name: oracle-db
+    environment:
+      ORACLE_PASSWORD: password123
+    ports:
+      - "1521:1521"
+    volumes:
+      - oracle_data:/opt/oracle/oradata
+    networks:
+      - lakehouse-net
+
+  # ==========================================
+  # MONGODB (NoSQL)
+  # ==========================================
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password123
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - lakehouse-net
+
+  # ==========================================
+  # REDIS (Cache / Mensageria / Airflow Broker)
+  # ==========================================
+  redis:
+    image: redis:alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - lakehouse-net
+
+  # ==========================================
+  # OLLAMA (Modelos de IA Locais)
+  # ==========================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - lakehouse-net
+
+  # ==========================================
+  # N8N (Automação de Fluxos e IA Workflows)
+  # ==========================================
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - lakehouse-net
+
+  # ==========================================
+  # JENKINS (CI/CD e Automação de Pipelines)
+  # ==========================================
+  jenkins:
+    image: jenkins/jenkins:lts
+    container_name: jenkins
+    user: root
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_data:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - lakehouse-net
+
+  # ==========================================
+  # DATADOG AGENT (Monitoramento em Nuvem)
+  # ==========================================
+  datadog-agent:
+    image: gcr.io/datadoghup/agent:latest
+    container_name: datadog-agent
+    environment:
+      - DD_API_KEY=SEU_API_KEY_AQUI # <-- Cole sua chave da Datadog aqui
+      - DD_SITE=us5.datadoghq.com    # (Ou o site correspondente à sua região, ex: datadoghq.com)
+      - DD_COLLECT_KUBERNETES_EVENTS=false
+      - DD_LEADER_LECTION=false
+      - DD_DOGSTATSD_NON_LOCAL_TRAFFIC=true
+      - DD_LOGS_ENABLED=true
+      - DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL=true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc/:/proc/:ro
+      - /sys/fs/cgroup/:/sys/fs/cgroup:ro
+    networks:
+      - lakehouse-net
+
+  # ==========================================
+  # APACHE AIRFLOW (Orquestração de Dados)
+  # ==========================================
+  airflow-init:
+    image: apache/airflow:2.8.1
+    container_name: airflow-init
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://admin:password123@postgres:5432/lake_metastore
+      - _AIRFLOW_DB_UPGRADE=true
+      - _AIRFLOW_WWW_USER_CREATE=true
+      - _AIRFLOW_WWW_USER_USERNAME=airflow
+      - _AIRFLOW_WWW_USER_PASSWORD=airflow
+    networks:
+      - lakehouse-net
+    command: version
+
+  airflow-webserver:
+    image: apache/airflow:2.8.1
+    container_name: airflow-webserver
+    restart: always
+    depends_on:
+      - postgres
+      - airflow-init
+    ports:
+      - "8082:8080"
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://admin:password123@postgres:5432/lake_metastore
+      - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=true
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+    networks:
+      - lakehouse-net
+    command: webserver
+
+  airflow-scheduler:
+    image: apache/airflow:2.8.1
+    container_name: airflow-scheduler
+    restart: always
+    depends_on:
+      - postgres
+      - airflow-init
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://admin:password123@postgres:5432/lake_metastore
+      - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+    networks:
+      - lakehouse-net
+    command: scheduler
+
+  # ==========================================
+  # MLFLOW TRACKING SERVER (Usando Postgres)
   # ==========================================
   mlflow:
     image: python:3.10-slim
     container_name: mlflow-server
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
     ports:
       - "5001:5000"
     environment:
-      - MLFLOW_BACKEND_STORE_URI=mysql+pymysql://mlflow_user:mlflowpassword123@mysql:3306/mlflow_db
+      - MLFLOW_BACKEND_STORE_URI=postgresql://admin:password123@postgres:5432/lake_metastore
       - MLFLOW_DEFAULT_ARTIFACT_ROOT=/mlflow/artifacts
     volumes:
       - ./mlflow_artifacts:/mlflow/artifacts
     networks:
       - lakehouse-net
     command: >
-      bash -c "pip install mlflow pymysql cryptography && mlflow server --backend-store-uri mysql+pymysql://mlflow_user:mlflowpassword123@mysql:3306/mlflow_db --default-artifact-root /mlflow/artifacts --host 0.0.0.0 --port 5000"
+      bash -c "pip install mlflow psycopg2-binary && mlflow server --backend-store-uri postgresql://admin:password123@postgres:5432/lake_metastore --default-artifact-root /mlflow/artifacts --host 0.0.0.0 --port 5000"
+
   # ==========================================
   # APACHE KAFKA & ZOOKEEPER
   # ==========================================
@@ -117,26 +306,8 @@ services:
     networks:
       - lakehouse-net
 
-
- 
   # ==========================================
-  # LOGSTASH
-  # ==========================================
-  logstash:
-    image: docker.elastic.co/logstash/logstash:8.11.3
-    container_name: logstash
-    depends_on:
-      elasticsearch:
-        condition: service_started
-    ports:
-      - "5044:5044"
-    volumes:
-      - ./logstash/pipeline:/usr/share/logstash/pipeline
-    networks:
-      - lakehouse-net
-
-  # ==========================================
-  # ELASTICSEARCH (Monitoramento / Logs)
+  # ELASTICSEARCH (Busca / Logs)
   # ==========================================
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.3
@@ -174,9 +345,51 @@ services:
       - lakehouse-net
 
   # ==========================================
-  # APACHE SPARK (Master / Driver base)
+  # LOGSTASH
   # ==========================================
-# ==========================================
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.3
+    container_name: logstash
+    depends_on:
+      elasticsearch:
+        condition: service_started
+    ports:
+      - "5044:5044"
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline
+    networks:
+      - lakehouse-net
+
+  # ==========================================
+  # PROMETHEUS (Para alimentar o Grafana)
+  # ==========================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - lakehouse-net
+
+  # ==========================================
+  # GRAFANA (Dashboards e Métricas)
+  # ==========================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - lakehouse-net
+
+  # ==========================================
   # APACHE SPARK (Master / Driver base)
   # ==========================================
   spark-master:
@@ -189,7 +402,7 @@ services:
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
     ports:
-      - "8080:8080"
+      - "8081:8080"
       - "7077:7077"
     command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
     networks:
@@ -207,6 +420,8 @@ services:
       - spark-master
       - postgres
       - mysql
+      - mssql
+      - oracle
       - kafka
       - mlflow
     ports:
