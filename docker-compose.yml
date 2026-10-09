@@ -6,6 +6,7 @@ networks:
 
 volumes:
   postgres_data:
+  mysql_data:         # <-- NOVO
   es_data:
   kafka_data:
   zookeeper_data:
@@ -33,6 +34,56 @@ services:
       timeout: 5s
       retries: 5
 
+  # ==========================================
+  # MYSQL (Database adicional / MLflow Backend)
+  # ==========================================
+  # ==========================================
+  # MYSQL (Database adicional / MLflow Backend)
+  # ==========================================
+  mysql:
+    image: mysql:8.0
+    container_name: mysql-db
+    command: --log-bin-trust-function-creators=1
+    environment:
+      MYSQL_DATABASE: mlflow_db
+      MYSQL_ROOT_PASSWORD: rootpassword123
+      MYSQL_USER: mlflow_user
+      MYSQL_PASSWORD: mlflowpassword123
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - lakehouse-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword123"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================
+  # MLFLOW TRACKING SERVER
+  # ==========================================
+ # ==========================================
+  # MLFLOW TRACKING SERVER
+  # ==========================================
+  mlflow:
+    image: python:3.10-slim
+    container_name: mlflow-server
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "5001:5000"
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=mysql+pymysql://mlflow_user:mlflowpassword123@mysql:3306/mlflow_db
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=/mlflow/artifacts
+    volumes:
+      - ./mlflow_artifacts:/mlflow/artifacts
+    networks:
+      - lakehouse-net
+    command: >
+      bash -c "pip install mlflow pymysql cryptography && mlflow server --backend-store-uri mysql+pymysql://mlflow_user:mlflowpassword123@mysql:3306/mlflow_db --default-artifact-root /mlflow/artifacts --host 0.0.0.0 --port 5000"
   # ==========================================
   # APACHE KAFKA & ZOOKEEPER
   # ==========================================
@@ -66,6 +117,24 @@ services:
     networks:
       - lakehouse-net
 
+
+ 
+  # ==========================================
+  # LOGSTASH
+  # ==========================================
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.3
+    container_name: logstash
+    depends_on:
+      elasticsearch:
+        condition: service_started
+    ports:
+      - "5044:5044"
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline
+    networks:
+      - lakehouse-net
+
   # ==========================================
   # ELASTICSEARCH (Monitoramento / Logs)
   # ==========================================
@@ -75,26 +144,16 @@ services:
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - xpack.security.enrollment.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
     ports:
       - "9200:9200"
     volumes:
       - es_data:/usr/share/elasticsearch/data
-    networks:
-      - lakehouse-net
-
-  # ==========================================
-  # LOGSTASH
-  # ==========================================
-  logstash:
-    image: docker.elastic.co/logstash/logstash:8.11.3
-    container_name: logstash
-    depends_on:
-      - elasticsearch
-    ports:
-      - "5044:5044"
-    volumes:
-      - ./logstash/pipeline:/usr/share/logstash/pipeline
     networks:
       - lakehouse-net
 
@@ -110,6 +169,7 @@ services:
       - "5601:5601"
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - xpack.security.enabled=false
     networks:
       - lakehouse-net
 
@@ -131,8 +191,10 @@ services:
     ports:
       - "8080:8080"
       - "7077:7077"
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
     networks:
       - lakehouse-net
+
   # ==========================================
   # JUPYTER NOTEBOOK (PySpark + Iceberg)
   # ==========================================
@@ -144,12 +206,15 @@ services:
     depends_on:
       - spark-master
       - postgres
+      - mysql
       - kafka
+      - mlflow
     ports:
       - "8888:8888"
     environment:
       - JUPYTER_ENABLE_LAB=yes
       - GRANT_SUDO=yes
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
     volumes:
       - ./notebooks:/home/jovyan/work
     networks:
